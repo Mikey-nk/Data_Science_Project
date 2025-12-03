@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 import re
 
+# Import the configuration manager
+from config import ConfigManager, config_ui
+
 class DataProfiler:
     """Profiles datasets to detect quality issues"""
     
@@ -313,16 +316,20 @@ class DataCleaner:
 class DataPipeline:
     """Orchestrates the data cleaning pipeline"""
     
-    def __init__(self):
+    def __init__(self, config_manager: Optional[ConfigManager] = None):
         self.data = None
         self.profiler = None
         self.cleaner = None
         self.profile_result = None
         self.cleaned_data = None
+        self.config = config_manager or ConfigManager()
     
     def ingest_data(self, file, file_type: str) -> pd.DataFrame:
         """Load data from various formats"""
         try:
+            # Check file size limit
+            max_size = self.config.get_config_value("app_settings", "max_file_size_mb") or 200
+            
             if file_type == 'csv':
                 self.data = pd.read_csv(file)
             elif file_type == 'excel':
@@ -361,10 +368,14 @@ class DataPipeline:
         self.cleaned_data = self.cleaner.apply_cleaning_rules(rules)
         return self.cleaned_data
     
-    def export_data(self, format: str = 'csv') -> bytes:
+    def export_data(self, format: str = None) -> bytes:
         """Export cleaned data in various formats"""
         if self.cleaned_data is None:
             raise ValueError("No cleaned data available. Please clean data first.")
+        
+        # Use default format from config if not specified
+        if format is None:
+            format = self.config.get_config_value("app_settings", "default_export_format") or 'csv'
         
         buffer = io.BytesIO()
         
@@ -412,21 +423,47 @@ def main():
     st.markdown("---")
     
     # Initialize session state
-    if 'pipeline' not in st.session_state:
-        st.session_state.pipeline = DataPipeline()
+    if 'config_manager' not in st.session_state:
+        st.session_state.config_manager = ConfigManager()
     
+    if 'pipeline' not in st.session_state:
+        st.session_state.pipeline = DataPipeline(st.session_state.config_manager)
+    
+    config_mgr = st.session_state.config_manager
     pipeline = st.session_state.pipeline
     
     # Sidebar for configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
         
+        # Show configuration status
+        firebase_api = config_mgr.get_api_key("firebase")
+        google_api = config_mgr.get_api_key("google_cloud")
+        
+        if firebase_api:
+            st.success("✅ Firebase API configured")
+        else:
+            st.warning("⚠️ Firebase API not configured")
+        
+        if google_api:
+            st.success(f"✅ Google Cloud API: {google_api[:10]}...")
+        else:
+            st.warning("⚠️ Google Cloud API not configured")
+        
+        if st.button("⚙️ Manage Configuration"):
+            st.session_state.show_config = not st.session_state.get('show_config', False)
+        
+        st.markdown("---")
+        
         data_source = st.radio("Data Source", ["Upload File", "Firebase Data"])
         
         if data_source == "Upload File":
+            # Get allowed file types from config
+            allowed_types = config_mgr.get_config_value("app_settings", "allowed_file_types") or ['csv', 'xlsx', 'json', 'parquet']
+            
             uploaded_file = st.file_uploader(
                 "Choose a file",
-                type=['csv', 'xlsx', 'json', 'parquet']
+                type=allowed_types
             )
             
             if uploaded_file:
@@ -453,6 +490,12 @@ def main():
                     st.success(f"✅ Loaded {len(pipeline.data)} rows")
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
+    
+    # Show configuration UI if toggled
+    if st.session_state.get('show_config', False):
+        with st.expander("⚙️ Configuration Manager", expanded=True):
+            config_ui()
+        st.markdown("---")
     
     # Main content area
     if pipeline.data is not None:
@@ -583,9 +626,15 @@ def main():
             st.subheader("Export Data")
             
             if pipeline.cleaned_data is not None:
+                # Get default export format from config
+                default_format = config_mgr.get_config_value("app_settings", "default_export_format") or 'csv'
+                format_options = ['csv', 'excel', 'json', 'parquet', 'firebase']
+                default_index = format_options.index(default_format) if default_format in format_options else 0
+                
                 export_format = st.selectbox(
                     "Export Format",
-                    ['csv', 'excel', 'json', 'parquet', 'firebase']
+                    format_options,
+                    index=default_index
                 )
                 
                 if st.button("Generate Export"):
@@ -629,6 +678,32 @@ def main():
     
     else:
         st.info("👆 Please upload a file or provide Firebase data to get started")
+        
+        # Show quick start guide
+        with st.expander("📖 Quick Start Guide"):
+            st.markdown("""
+            ### Getting Started
+            
+            1. **Configure APIs** (Optional)
+               - Click "⚙️ Manage Configuration" in the sidebar
+               - Add your Firebase and Google Cloud API keys
+            
+            2. **Load Data**
+               - Upload a CSV, Excel, JSON, or Parquet file
+               - Or paste Firebase data as JSON
+            
+            3. **Profile Your Data**
+               - Go to the "Profile" tab
+               - Click "Generate Profile" to analyze data quality
+            
+            4. **Clean Your Data**
+               - Go to the "Clean" tab
+               - Select cleaning rules and apply them
+            
+            5. **Export Results**
+               - Go to the "Export" tab
+               - Choose your format and download
+            """)
 
 
 if __name__ == "__main__":
