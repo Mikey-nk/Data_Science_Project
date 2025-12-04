@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import re
 
-# Import the configuration manager and hybrid intelligence
+# Import the configuration manager, hybrid intelligence, and visual insights
 from config import ConfigManager, config_ui
 from hybrid_intelligence import (
     CleaningMode, RiskLevel, CleaningRule, OperationExplanation,
     IntelligentRuleGenerator, ExplanationEngine, ApprovalManager, ProgressNarrator
 )
+from visual_insights import DataQualityVisualizer, ComparisonVisualizer, InteractiveDashboard
 
 class DataProfiler:
     """Profiles datasets to detect quality issues"""
@@ -384,6 +385,11 @@ class DataPipeline:
         self.narrator = ProgressNarrator()
         self.generated_rules = []
         self.explanations = []
+        
+        # Visual insights components
+        self.dashboard = None
+        self.original_data = None
+        self.original_profile = None
     
     def ingest_data(self, file, file_type: str) -> pd.DataFrame:
         """Load data from various formats"""
@@ -413,8 +419,20 @@ class DataPipeline:
         if self.data is None:
             raise ValueError("No data ingested. Please ingest data first.")
         
+        # Store original data and profile for comparison
+        if self.original_data is None:
+            self.original_data = self.data.copy()
+        
         self.profiler = DataProfiler(self.data)
         self.profile_result = self.profiler.generate_profile()
+        
+        # Store original profile
+        if self.original_profile is None:
+            self.original_profile = self.profile_result.copy()
+        
+        # Create dashboard
+        self.dashboard = InteractiveDashboard(self.data, self.profile_result)
+        
         return self.profile_result
     
     def generate_intelligent_rules(self) -> Tuple[List[CleaningRule], List[OperationExplanation]]:
@@ -730,36 +748,48 @@ def show_profile_tab(pipeline):
         
         st.success("✅ Profile generated")
         
-        # Display profile results
-        st.markdown("### Missing Data")
-        if profile['missing_data']['by_column']:
-            missing_df = pd.DataFrame(profile['missing_data']['by_column']).T
-            st.dataframe(missing_df, use_container_width=True)
-        else:
-            st.info("No missing data found")
+        # Add visualization tabs
+        viz_tabs = st.tabs(["📊 Overview Dashboard", "🔍 Detailed Analysis", "📋 Raw Profile"])
         
-        st.markdown("### Duplicates")
-        col1, col2 = st.columns(2)
-        col1.metric("Duplicate Rows", profile['duplicates']['duplicate_rows'])
-        col2.metric("Percentage", f"{profile['duplicates']['duplicate_percentage']}%")
+        with viz_tabs[0]:
+            # Render interactive dashboard
+            pipeline.dashboard.render_overview_dashboard()
         
-        st.markdown("### Data Types")
-        types_df = pd.DataFrame(list(profile['data_types'].items()), columns=['Column', 'Type'])
-        st.dataframe(types_df, use_container_width=True)
+        with viz_tabs[1]:
+            # Render detailed analysis
+            pipeline.dashboard.render_detailed_analysis()
         
-        st.markdown("### Outliers")
-        if profile['outliers']:
-            outliers_df = pd.DataFrame(profile['outliers']).T
-            st.dataframe(outliers_df, use_container_width=True)
-        else:
-            st.info("No outliers detected")
-        
-        st.markdown("### Format Issues")
-        if profile['format_issues']:
-            for col, issues in profile['format_issues'].items():
-                st.warning(f"**{col}**: {', '.join(issues)}")
-        else:
-            st.info("No format issues detected")
+        with viz_tabs[2]:
+            # Display raw profile results (original format)
+            st.markdown("### Missing Data")
+            if profile['missing_data']['by_column']:
+                missing_df = pd.DataFrame(profile['missing_data']['by_column']).T
+                st.dataframe(missing_df, use_container_width=True)
+            else:
+                st.info("No missing data found")
+            
+            st.markdown("### Duplicates")
+            col1, col2 = st.columns(2)
+            col1.metric("Duplicate Rows", profile['duplicates']['duplicate_rows'])
+            col2.metric("Percentage", f"{profile['duplicates']['duplicate_percentage']}%")
+            
+            st.markdown("### Data Types")
+            types_df = pd.DataFrame(list(profile['data_types'].items()), columns=['Column', 'Type'])
+            st.dataframe(types_df, use_container_width=True)
+            
+            st.markdown("### Outliers")
+            if profile['outliers']:
+                outliers_df = pd.DataFrame(profile['outliers']).T
+                st.dataframe(outliers_df, use_container_width=True)
+            else:
+                st.info("No outliers detected")
+            
+            st.markdown("### Format Issues")
+            if profile['format_issues']:
+                for col, issues in profile['format_issues'].items():
+                    st.warning(f"**{col}**: {', '.join(issues)}")
+            else:
+                st.info("No format issues detected")
 
 
 def show_manual_cleaning_tab(pipeline):
@@ -984,26 +1014,50 @@ def show_results_tab(pipeline):
         st.warning("⚠️ Please run auto-clean first")
         return
     
-    # Show cleaned data
-    st.markdown("### ✅ Cleaned Data")
-    st.dataframe(pipeline.cleaned_data.head(100), use_container_width=True)
+    # Use tabs for different views
+    result_tabs = st.tabs(["✅ Cleaned Data", "📊 Visual Comparison", "🔍 Operations"])
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Original Rows", len(pipeline.data))
-        st.metric("Cleaned Rows", len(pipeline.cleaned_data))
+    with result_tabs[0]:
+        # Show cleaned data
+        st.markdown("### ✅ Cleaned Data Preview")
+        st.dataframe(pipeline.cleaned_data.head(100), use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Original Rows", len(pipeline.original_data))
+            st.metric("Cleaned Rows", len(pipeline.cleaned_data))
+        
+        with col2:
+            row_diff = len(pipeline.original_data) - len(pipeline.cleaned_data)
+            st.metric("Rows Removed", row_diff)
+            pct_change = (row_diff / len(pipeline.original_data) * 100) if len(pipeline.original_data) > 0 else 0
+            st.metric("Data Retained", f"{100 - pct_change:.1f}%")
     
-    with col2:
-        row_diff = len(pipeline.data) - len(pipeline.cleaned_data)
-        st.metric("Rows Removed", row_diff)
-        pct_change = (row_diff / len(pipeline.data) * 100) if len(pipeline.data) > 0 else 0
-        st.metric("Data Retained", f"{100 - pct_change:.1f}%")
+    with result_tabs[1]:
+        # Show visual comparison
+        if pipeline.original_data is not None and pipeline.original_profile is not None:
+            # Re-profile cleaned data
+            cleaned_profiler = DataProfiler(pipeline.cleaned_data)
+            cleaned_profile = cleaned_profiler.generate_profile()
+            
+            # Create dashboard for cleaned data
+            cleaned_dashboard = InteractiveDashboard(pipeline.cleaned_data, cleaned_profile)
+            
+            # Render comparison
+            cleaned_dashboard.render_comparison_dashboard(
+                pipeline.original_data,
+                pipeline.original_profile,
+                cleaned_profile
+            )
+        else:
+            st.warning("Original data not available for comparison")
     
-    # Show what was done
-    st.markdown("### 🔍 Operations Performed")
-    for i, explanation in enumerate(st.session_state.auto_explanations):
-        with st.expander(f"{i+1}. {explanation.title}"):
-            st.markdown(explanation.to_markdown())
+    with result_tabs[2]:
+        # Show what was done
+        st.markdown("### 🔍 Operations Performed")
+        for i, explanation in enumerate(st.session_state.auto_explanations):
+            with st.expander(f"{i+1}. {explanation.title}"):
+                st.markdown(explanation.to_markdown())
 
 
 def show_export_tab(pipeline):
