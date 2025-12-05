@@ -7,13 +7,17 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import re
 
-# Import the configuration manager, hybrid intelligence, and visual insights
+# Import the configuration manager, hybrid intelligence, visual insights, and power tools
 from config import ConfigManager, config_ui
 from hybrid_intelligence import (
     CleaningMode, RiskLevel, CleaningRule, OperationExplanation,
     IntelligentRuleGenerator, ExplanationEngine, ApprovalManager, ProgressNarrator
 )
 from visual_insights import DataQualityVisualizer, ComparisonVisualizer, InteractiveDashboard
+from power_tools import (
+    SnapshotManager, CodeGenerator, LearningEngine, RecipeManager, 
+    INDUSTRY_TEMPLATES
+)
 
 class DataProfiler:
     """Profiles datasets to detect quality issues"""
@@ -390,6 +394,21 @@ class DataPipeline:
         self.dashboard = None
         self.original_data = None
         self.original_profile = None
+        
+        # Power tools components
+        self.snapshot_manager = SnapshotManager(max_snapshots=10)
+        self.code_generator = CodeGenerator()
+        self.learning_engine = LearningEngine()
+        self.recipe_manager = RecipeManager()
+        
+        # Load industry templates
+        for template_key, template_data in INDUSTRY_TEMPLATES.items():
+            self.recipe_manager.save_recipe(
+                name=template_data['name'],
+                operations=template_data['operations'],
+                description=template_data['description'],
+                tags=template_data['tags']
+            )
     
     def ingest_data(self, file, file_type: str) -> pd.DataFrame:
         """Load data from various formats"""
@@ -450,9 +469,33 @@ class DataPipeline:
         if self.data is None:
             raise ValueError("No data ingested. Please ingest data first.")
         
+        # Save snapshot before cleaning
+        if self.profile_result:
+            self.snapshot_manager.save_snapshot(
+                self.data,
+                self.profile_result,
+                "before_cleaning",
+                "Original data before cleaning"
+            )
+        
         self.narrator = ProgressNarrator()
         self.cleaner = DataCleaner(self.data)
         self.cleaned_data = self.cleaner.apply_cleaning_rules(approved_rules, self.narrator)
+        
+        # Save snapshot after cleaning
+        if self.profile_result:
+            cleaned_profiler = DataProfiler(self.cleaned_data)
+            cleaned_profile = cleaned_profiler.generate_profile()
+            self.snapshot_manager.save_snapshot(
+                self.cleaned_data,
+                cleaned_profile,
+                "after_cleaning",
+                "Data after cleaning"
+            )
+        
+        # Record operations for code generation
+        for rule in approved_rules:
+            self.code_generator.add_operation(rule.operation, rule.parameters)
         
         return self.cleaned_data
     
@@ -637,15 +680,15 @@ def main():
     if pipeline.data is not None:
         # Different tab layouts based on mode
         if st.session_state.cleaning_mode == CleaningMode.MANUAL:
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🧹 Clean (Manual)", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🧹 Clean (Manual)", "⚡ Power Tools", "📤 Export"])
             show_manual_mode(pipeline, tabs)
         
         elif st.session_state.cleaning_mode == CleaningMode.ASSISTED:
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 AI Suggestions", "✅ Review & Approve", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 AI Suggestions", "✅ Review & Approve", "⚡ Power Tools", "📤 Export"])
             show_assisted_mode(pipeline, tabs)
         
         else:  # Automatic
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 Auto-Clean", "📊 Results", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 Auto-Clean", "📊 Results", "⚡ Power Tools", "📤 Export"])
             show_automatic_mode(pipeline, tabs)
     
     else:
@@ -688,6 +731,9 @@ def show_manual_mode(pipeline, tabs):
         show_manual_cleaning_tab(pipeline)
     
     with tabs[3]:
+        show_power_tools_tab(pipeline)
+    
+    with tabs[4]:
         show_export_tab(pipeline)
 
 
@@ -706,6 +752,9 @@ def show_assisted_mode(pipeline, tabs):
         show_review_approve_tab(pipeline)
     
     with tabs[4]:
+        show_power_tools_tab(pipeline)
+    
+    with tabs[5]:
         show_export_tab(pipeline)
 
 
@@ -724,6 +773,9 @@ def show_automatic_mode(pipeline, tabs):
         show_results_tab(pipeline)
     
     with tabs[4]:
+        show_power_tools_tab(pipeline)
+    
+    with tabs[5]:
         show_export_tab(pipeline)
 
 
@@ -1137,6 +1189,387 @@ def show_export_tab(pipeline):
             )
     else:
         st.warning("⚠️ Please clean the data first before exporting")
+
+
+def show_power_tools_tab(pipeline):
+    """Show power tools interface"""
+    st.subheader("⚡ Power User Tools")
+    
+    # Create sub-tabs for different power tools
+    power_tabs = st.tabs(["⏪ Undo/Redo", "🐍 Code Generation", "📚 Recipes", "🧠 Learning Insights"])
+    
+    with power_tabs[0]:
+        show_undo_redo_tab(pipeline)
+    
+    with power_tabs[1]:
+        show_code_generation_tab(pipeline)
+    
+    with power_tabs[2]:
+        show_recipes_tab(pipeline)
+    
+    with power_tabs[3]:
+        show_learning_tab(pipeline)
+
+
+def show_undo_redo_tab(pipeline):
+    """Show undo/redo interface"""
+    st.markdown("### ⏪ Version History & Undo/Redo")
+    st.info("💡 Track changes and revert to previous versions of your data")
+    
+    # Undo/Redo buttons
+    col1, col2, col3 = st.columns([1, 1, 2])
+    
+    with col1:
+        if st.button("⏪ Undo", disabled=not pipeline.snapshot_manager.can_undo()):
+            snapshot = pipeline.snapshot_manager.undo()
+            if snapshot:
+                pipeline.data = snapshot.data.copy()
+                pipeline.profile_result = snapshot.profile
+                st.success(f"↩️ Reverted to: {snapshot.description}")
+                st.rerun()
+    
+    with col2:
+        if st.button("⏩ Redo", disabled=not pipeline.snapshot_manager.can_redo()):
+            snapshot = pipeline.snapshot_manager.redo()
+            if snapshot:
+                pipeline.data = snapshot.data.copy()
+                pipeline.profile_result = snapshot.profile
+                st.success(f"↪️ Restored: {snapshot.description}")
+                st.rerun()
+    
+    with col3:
+        if st.button("🗑️ Clear History"):
+            pipeline.snapshot_manager.clear_history()
+            st.success("✅ History cleared")
+            st.rerun()
+    
+    # Show snapshot history
+    st.markdown("### 📜 Snapshot History")
+    history = pipeline.snapshot_manager.get_history()
+    
+    if not history:
+        st.info("No snapshots yet. Snapshots are created automatically when you clean data.")
+    else:
+        for i, snapshot in enumerate(history):
+            is_current = snapshot['is_current']
+            
+            with st.expander(
+                f"{'📍 ' if is_current else '📄 '}Snapshot {i+1}: {snapshot['operation']} "
+                f"({snapshot['rows']:,} rows) {'← Current' if is_current else ''}",
+                expanded=is_current
+            ):
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Rows", f"{snapshot['rows']:,}")
+                col2.metric("Columns", snapshot['columns'])
+                col3.metric("Memory", f"{snapshot['memory_mb']:.2f} MB")
+                
+                st.write(f"**Description:** {snapshot['description']}")
+                st.write(f"**Time:** {snapshot['timestamp']}")
+                
+                if not is_current:
+                    if st.button(f"🔄 Restore This Version", key=f"restore_{i}"):
+                        restored = pipeline.snapshot_manager.jump_to_snapshot(i)
+                        if restored:
+                            pipeline.data = restored.data.copy()
+                            pipeline.profile_result = restored.profile
+                            st.success(f"✅ Restored snapshot {i+1}")
+                            st.rerun()
+
+
+def show_code_generation_tab(pipeline):
+    """Show code generation interface"""
+    st.markdown("### 🐍 Generate Executable Code")
+    st.info("💡 Export your cleaning workflow as executable Python, PySpark, or SQL code")
+    
+    if not pipeline.code_generator.operations:
+        st.warning("⚠️ No cleaning operations recorded yet. Clean your data first to generate code.")
+        return
+    
+    # Show operations summary
+    st.markdown(f"**Operations to Export:** {len(pipeline.code_generator.operations)}")
+    
+    for i, op in enumerate(pipeline.code_generator.operations):
+        st.write(f"{i+1}. `{op['operation']}` - {len(op['parameters'])} parameter(s)")
+    
+    st.markdown("---")
+    
+    # Code generation options
+    code_type = st.selectbox(
+        "Select Code Type",
+        ["Pandas (Python)", "PySpark", "SQL", "Jupyter Notebook"],
+        help="Choose the format for generated code"
+    )
+    
+    df_name = st.text_input("DataFrame Variable Name", value="df", help="Name for the dataframe variable")
+    
+    if st.button("🔮 Generate Code", type="primary"):
+        with st.spinner("Generating code..."):
+            if code_type == "Pandas (Python)":
+                code = pipeline.code_generator.generate_pandas_code(df_name)
+                st.code(code, language="python")
+                
+                st.download_button(
+                    "📥 Download Python Script",
+                    code,
+                    "data_cleaning.py",
+                    "text/x-python"
+                )
+            
+            elif code_type == "PySpark":
+                code = pipeline.code_generator.generate_pyspark_code(df_name)
+                st.code(code, language="python")
+                
+                st.download_button(
+                    "📥 Download PySpark Script",
+                    code,
+                    "data_cleaning_pyspark.py",
+                    "text/x-python"
+                )
+            
+            elif code_type == "SQL":
+                code = pipeline.code_generator.generate_sql_code(df_name)
+                st.code(code, language="sql")
+                
+                st.download_button(
+                    "📥 Download SQL Script",
+                    code,
+                    "data_cleaning.sql",
+                    "text/x-sql"
+                )
+            
+            elif code_type == "Jupyter Notebook":
+                notebook = pipeline.code_generator.export_as_notebook(df_name)
+                notebook_json = json.dumps(notebook, indent=2)
+                
+                st.success("✅ Jupyter Notebook generated!")
+                st.info("💡 Download and open in Jupyter to run interactively")
+                
+                st.download_button(
+                    "📥 Download Notebook (.ipynb)",
+                    notebook_json,
+                    "data_cleaning.ipynb",
+                    "application/x-ipynb+json"
+                )
+        
+        st.success("✅ Code generated successfully!")
+        
+        # Usage instructions
+        with st.expander("📖 How to Use Generated Code"):
+            st.markdown("""
+            ### Using Your Generated Code
+            
+            **Pandas (Python):**
+            1. Save the script as `data_cleaning.py`
+            2. Update the file path in the load data section
+            3. Run: `python data_cleaning.py`
+            
+            **PySpark:**
+            1. Save as `data_cleaning_pyspark.py`
+            2. Ensure Spark is installed
+            3. Run: `spark-submit data_cleaning_pyspark.py`
+            
+            **SQL:**
+            1. Update table names
+            2. Execute in your SQL environment
+            
+            **Jupyter Notebook:**
+            1. Open in Jupyter Lab/Notebook
+            2. Run cells sequentially
+            3. Modify as needed
+            """)
+
+
+def show_recipes_tab(pipeline):
+    """Show recipe management interface"""
+    st.markdown("### 📚 Cleaning Recipes & Templates")
+    st.info("💡 Save and reuse cleaning workflows, or use industry templates")
+    
+    # Recipe tabs
+    recipe_tabs = st.tabs(["💾 Save Recipe", "📂 My Recipes", "🏭 Industry Templates"])
+    
+    with recipe_tabs[0]:
+        st.markdown("#### Save Current Workflow as Recipe")
+        
+        if not pipeline.code_generator.operations:
+            st.warning("⚠️ No operations to save. Clean your data first.")
+        else:
+            recipe_name = st.text_input("Recipe Name", placeholder="e.g., Customer Data Standard Cleaning")
+            recipe_description = st.text_area("Description", placeholder="Describe what this recipe does...")
+            recipe_tags = st.text_input("Tags (comma-separated)", placeholder="e.g., customer, crm, basic")
+            
+            if st.button("💾 Save Recipe", type="primary"):
+                if recipe_name:
+                    tags = [tag.strip() for tag in recipe_tags.split(',')] if recipe_tags else []
+                    
+                    recipe = pipeline.recipe_manager.save_recipe(
+                        name=recipe_name,
+                        operations=pipeline.code_generator.operations,
+                        description=recipe_description,
+                        tags=tags
+                    )
+                    
+                    st.success(f"✅ Recipe '{recipe_name}' saved successfully!")
+                else:
+                    st.error("❌ Please provide a recipe name")
+    
+    with recipe_tabs[1]:
+        st.markdown("#### Your Saved Recipes")
+        
+        recipes = pipeline.recipe_manager.list_recipes()
+        
+        if not recipes:
+            st.info("No recipes saved yet. Save your first workflow!")
+        else:
+            # Search recipes
+            search_query = st.text_input("🔍 Search recipes", placeholder="Search by name...")
+            
+            filtered_recipes = [r for r in recipes if not search_query or search_query.lower() in r['name'].lower()]
+            
+            for recipe in filtered_recipes:
+                with st.expander(f"📋 {recipe['name']} ({recipe['operations_count']} operations)"):
+                    st.write(f"**Description:** {recipe['description']}")
+                    st.write(f"**Created:** {recipe['created_at']}")
+                    st.write(f"**Tags:** {', '.join(recipe['tags']) if recipe['tags'] else 'None'}")
+                    st.write(f"**Used:** {recipe['usage_count']} times")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if st.button(f"📥 Load Recipe", key=f"load_{recipe['name']}"):
+                            loaded = pipeline.recipe_manager.load_recipe(recipe['name'])
+                            if loaded:
+                                # Apply recipe operations
+                                st.success(f"✅ Recipe '{recipe['name']}' loaded!")
+                                st.info("💡 Recipe operations are ready to apply")
+                    
+                    with col2:
+                        recipe_json = pipeline.recipe_manager.export_recipe(recipe['name'])
+                        if recipe_json:
+                            st.download_button(
+                                "📤 Export",
+                                recipe_json,
+                                f"{recipe['name'].replace(' ', '_')}.json",
+                                "application/json",
+                                key=f"export_{recipe['name']}"
+                            )
+                    
+                    with col3:
+                        if st.button(f"🗑️ Delete", key=f"delete_{recipe['name']}"):
+                            pipeline.recipe_manager.delete_recipe(recipe['name'])
+                            st.success(f"✅ Recipe deleted")
+                            st.rerun()
+            
+            # Popular recipes
+            st.markdown("---")
+            st.markdown("#### 🔥 Most Used Recipes")
+            popular = pipeline.recipe_manager.get_popular_recipes(limit=3)
+            
+            if popular:
+                for recipe in popular:
+                    st.write(f"- **{recipe['name']}** ({recipe['usage_count']} uses)")
+    
+    with recipe_tabs[2]:
+        st.markdown("#### 🏭 Industry Templates")
+        st.info("💡 Pre-built templates for common data cleaning scenarios")
+        
+        for template_key, template in INDUSTRY_TEMPLATES.items():
+            with st.expander(f"🏷️ {template['name']}"):
+                st.write(f"**Description:** {template['description']}")
+                st.write(f"**Tags:** {', '.join(template['tags'])}")
+                st.write(f"**Operations:** {len(template['operations'])}")
+                
+                # Show operations
+                st.markdown("**Workflow:**")
+                for i, op in enumerate(template['operations']):
+                    st.write(f"{i+1}. {op['operation'].replace('_', ' ').title()}")
+                
+                if st.button(f"🚀 Use Template", key=f"use_{template_key}"):
+                    # Load template into recipe manager
+                    pipeline.recipe_manager.save_recipe(
+                        name=f"{template['name']} (Copy)",
+                        operations=template['operations'],
+                        description=template['description'],
+                        tags=template['tags']
+                    )
+                    st.success(f"✅ Template loaded! Check 'My Recipes' tab")
+
+
+def show_learning_tab(pipeline):
+    """Show AI learning insights"""
+    st.markdown("### 🧠 AI Learning Insights")
+    st.info("💡 See how the AI learns from your preferences")
+    
+    insights = pipeline.learning_engine.get_learning_insights()
+    
+    # Overall metrics
+    st.markdown("#### 📊 Learning Statistics")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    col1.metric("Total Interactions", insights['total_interactions'])
+    col2.metric("Approvals", insights['approvals'])
+    col3.metric("Rejections", insights['rejections'])
+    col4.metric("Approval Rate", f"{insights['approval_rate']:.1f}%")
+    
+    # Learned patterns
+    st.markdown("#### 🎯 Learned Patterns")
+    col1, col2 = st.columns(2)
+    
+    col1.metric("Missing Value Preferences", insights['learned_patterns']['missing_value_preferences'])
+    col2.metric("Outlier Handling Preferences", insights['learned_patterns']['outlier_preferences'])
+    
+    # Feedback history
+    if pipeline.learning_engine.feedback_history:
+        st.markdown("#### 📜 Recent Feedback")
+        
+        recent = pipeline.learning_engine.feedback_history[-10:]  # Last 10
+        
+        for feedback in reversed(recent):
+            action_emoji = {
+                'approved': '✅',
+                'rejected': '❌',
+                'modified': '✏️'
+            }
+            emoji = action_emoji.get(feedback['action'], '📝')
+            
+            st.write(f"{emoji} **{feedback['action'].title()}** {feedback['operation']} - {feedback['timestamp']}")
+    else:
+        st.info("No feedback recorded yet. Use Assisted mode to start teaching the AI!")
+    
+    # Export/Import preferences
+    st.markdown("---")
+    st.markdown("#### 💾 Manage Learning Data")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Export Preferences**")
+        if st.button("📥 Export Learning Data"):
+            prefs_json = pipeline.learning_engine.export_preferences()
+            st.download_button(
+                "Download Preferences",
+                prefs_json,
+                "learning_preferences.json",
+                "application/json"
+            )
+    
+    with col2:
+        st.markdown("**Import Preferences**")
+        uploaded_prefs = st.file_uploader("Upload learning data", type=['json'], key="import_learning")
+        if uploaded_prefs:
+            try:
+                prefs_data = uploaded_prefs.read().decode()
+                pipeline.learning_engine.import_preferences(prefs_data)
+                st.success("✅ Preferences imported!")
+            except Exception as e:
+                st.error(f"❌ Error importing: {e}")
+    
+    # Reset option
+    st.markdown("---")
+    if st.button("🔄 Reset All Learning Data", help="Clear all learned preferences"):
+        if st.checkbox("I understand this will delete all learning data"):
+            pipeline.learning_engine.reset_learning()
+            st.success("✅ Learning data reset")
+            st.rerun()
 
 
 if __name__ == "__main__":
