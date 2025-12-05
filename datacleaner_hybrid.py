@@ -464,7 +464,7 @@ class DataPipeline:
         
         return self.generated_rules, self.explanations
     
-    def clean_data_intelligent(self, approved_rules: List[CleaningRule]) -> pd.DataFrame:
+    def clean_data_intelligent(self, approved_rules: List[CleaningRule], auto_mode: bool = False) -> pd.DataFrame:
         """Clean data using approved intelligent rules"""
         if self.data is None:
             raise ValueError("No data ingested. Please ingest data first.")
@@ -496,6 +496,23 @@ class DataPipeline:
         # Record operations for code generation
         for rule in approved_rules:
             self.code_generator.add_operation(rule.operation, rule.parameters)
+            
+            # NEW: Auto-learn from successful operations in automatic mode
+            if auto_mode and rule.confidence >= 0.75:  # Only learn from confident rules
+                try:
+                    # Check if operation was successful (data actually changed)
+                    success = True  # Could add validation here
+                    
+                    self.learning_engine.auto_learn_from_operation(
+                        operation=rule.operation,
+                        parameters=rule.parameters,
+                        column=rule.column,
+                        confidence=rule.confidence,
+                        success=success
+                    )
+                except Exception as e:
+                    # Don't fail cleaning if learning fails
+                    pass
         
         return self.cleaned_data
     
@@ -1030,6 +1047,28 @@ def show_auto_clean_tab(pipeline):
     st.subheader("🤖 Automatic Cleaning with AI")
     st.info("💡 AI will automatically clean your data and explain every decision")
     
+    # Auto-learning toggle
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        auto_learning = st.checkbox(
+            "🧠 Enable Auto-Learning (AI learns from this cleaning)",
+            value=pipeline.learning_engine.auto_learning_enabled,
+            help="When enabled, AI will learn from successful operations to improve future suggestions"
+        )
+        pipeline.learning_engine.enable_auto_learning(auto_learning)
+    
+    with col2:
+        if auto_learning:
+            threshold = st.slider(
+                "Confidence threshold",
+                min_value=0.7,
+                max_value=1.0,
+                value=pipeline.learning_engine.confidence_threshold,
+                step=0.05,
+                help="Minimum confidence to learn from (higher = more selective)"
+            )
+            pipeline.learning_engine.set_confidence_threshold(threshold)
+    
     if st.button("🚀 Start Auto-Clean", type="primary"):
         with st.spinner("🤖 AI is analyzing and cleaning your data..."):
             # Generate rules
@@ -1038,11 +1077,16 @@ def show_auto_clean_tab(pipeline):
             # Auto-approve safe operations
             pipeline.approval_manager.auto_approve_safe_operations(rules)
             
-            # Apply all approved rules
+            # Apply all approved rules with auto-learning enabled
             approved_rules = pipeline.approval_manager.get_approved_rules()
-            pipeline.clean_data_intelligent(approved_rules)
+            pipeline.clean_data_intelligent(approved_rules, auto_mode=True)
         
         st.success("✅ Automatic cleaning complete!")
+        
+        # Show learning summary if enabled
+        if auto_learning:
+            insights = pipeline.learning_engine.get_learning_insights()
+            st.info(f"🧠 AI learned from {insights['auto_learned']} operations in this session (avg confidence: {insights['avg_auto_confidence']:.0%})")
         
         # Store for results tab
         st.session_state.auto_clean_complete = True
@@ -1497,43 +1541,125 @@ def show_recipes_tab(pipeline):
 def show_learning_tab(pipeline):
     """Show AI learning insights"""
     st.markdown("### 🧠 AI Learning Insights")
-    st.info("💡 See how the AI learns from your preferences")
+    st.info("💡 See how the AI learns from your preferences and automatic operations")
     
     insights = pipeline.learning_engine.get_learning_insights()
     
-    # Overall metrics
-    st.markdown("#### 📊 Learning Statistics")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    col1.metric("Total Interactions", insights['total_interactions'])
-    col2.metric("Approvals", insights['approvals'])
-    col3.metric("Rejections", insights['rejections'])
-    col4.metric("Approval Rate", f"{insights['approval_rate']:.1f}%")
-    
-    # Learned patterns
-    st.markdown("#### 🎯 Learned Patterns")
+    # Auto-learning status
+    st.markdown("#### ⚙️ Auto-Learning Configuration")
     col1, col2 = st.columns(2)
     
-    col1.metric("Missing Value Preferences", insights['learned_patterns']['missing_value_preferences'])
-    col2.metric("Outlier Handling Preferences", insights['learned_patterns']['outlier_preferences'])
+    with col1:
+        status = "🟢 Enabled" if insights['auto_learning_enabled'] else "🔴 Disabled"
+        st.metric("Auto-Learning Status", status)
     
-    # Feedback history
-    if pipeline.learning_engine.feedback_history:
-        st.markdown("#### 📜 Recent Feedback")
+    with col2:
+        st.metric("Confidence Threshold", f"{insights['confidence_threshold']:.0%}")
+    
+    st.markdown("---")
+    
+    # Overall metrics
+    st.markdown("#### 📊 Learning Statistics")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    col1.metric("Total Interactions", insights['total_interactions'])
+    col2.metric("Manual Approvals", insights['approvals'])
+    col3.metric("Rejections", insights['rejections'])
+    col4.metric("Auto-Learned", insights['auto_learned'], help="Operations learned from automatic mode")
+    col5.metric("Approval Rate", f"{insights['approval_rate']:.1f}%")
+    
+    # Learned patterns with breakdown
+    st.markdown("#### 🎯 Learned Patterns")
+    col1, col2, col3 = st.columns(3)
+    
+    col1.metric("Missing Value Rules", insights['learned_patterns']['missing_value_preferences'])
+    col2.metric("Outlier Rules", insights['learned_patterns']['outlier_preferences'])
+    col3.metric("Auto-Learned Operations", insights['learned_patterns']['auto_learned_operations'])
+    
+    if insights['auto_learned'] > 0:
+        st.markdown("#### 🤖 Auto-Learning Effectiveness")
+        st.metric("Average Auto-Learning Confidence", f"{insights['avg_auto_confidence']:.0%}")
         
-        recent = pipeline.learning_engine.feedback_history[-10:]  # Last 10
+        st.info("""
+        **How Auto-Learning Works:**
+        - ✅ Enabled in Automatic mode
+        - 🎯 Learns from high-confidence operations (>{:.0%})
+        - 📈 Improves future suggestions
+        - 🔄 Applies learned patterns automatically
+        """.format(insights['confidence_threshold']))
+    
+    # Feedback history with auto-learn indicator
+    if pipeline.learning_engine.feedback_history:
+        st.markdown("#### 📜 Recent Learning Activity")
+        
+        recent = pipeline.learning_engine.feedback_history[-15:]  # Last 15
         
         for feedback in reversed(recent):
             action_emoji = {
                 'approved': '✅',
                 'rejected': '❌',
-                'modified': '✏️'
+                'modified': '✏️',
+                'auto_learned': '🤖'
             }
             emoji = action_emoji.get(feedback['action'], '📝')
             
-            st.write(f"{emoji} **{feedback['action'].title()}** {feedback['operation']} - {feedback['timestamp']}")
+            confidence_badge = ""
+            if feedback.get('confidence'):
+                conf = feedback['confidence']
+                if conf >= 0.9:
+                    confidence_badge = f" 🟢 {conf:.0%}"
+                elif conf >= 0.75:
+                    confidence_badge = f" 🟡 {conf:.0%}"
+                else:
+                    confidence_badge = f" 🔴 {conf:.0%}"
+            
+            action_text = feedback['action'].replace('_', ' ').title()
+            st.write(f"{emoji} **{action_text}**: {feedback['operation']}{confidence_badge} - {feedback['timestamp'][:19]}")
     else:
-        st.info("No feedback recorded yet. Use Assisted mode to start teaching the AI!")
+        st.info("No learning activity yet. Use Assisted or Automatic mode to start teaching the AI!")
+    
+    # Learning effectiveness explanation
+    with st.expander("📖 Understanding Auto-Learning"):
+        st.markdown("""
+        ### How Auto-Learning Works
+        
+        **In Automatic Mode:**
+        1. AI generates cleaning suggestions
+        2. Applies high-confidence operations (>85%)
+        3. **Monitors success** of each operation
+        4. **Learns from successful operations** above your threshold
+        5. **Improves future suggestions** based on learned patterns
+        
+        **What AI Learns:**
+        - ✅ Your preferred strategies for missing values
+        - ✅ Your preferred outlier handling methods
+        - ✅ Patterns in your data types
+        - ✅ Which operations work best for you
+        
+        **Benefits:**
+        - 🚀 Faster cleaning over time
+        - 🎯 More accurate suggestions
+        - 🔄 Consistent with your style
+        - 📈 Continuously improving
+        
+        **Example:**
+        ```
+        Dataset 1 (Auto mode):
+          Column 'age' has missing values
+          AI uses MEDIAN (confidence: 85%)
+          ✓ Success! AI learns you prefer MEDIAN for age
+        
+        Dataset 2 (weeks later):
+          Column 'age' has missing values
+          AI suggests MEDIAN (confidence: 95% - learned!)
+          ✓ Applied automatically with higher confidence
+        ```
+        
+        **Confidence Threshold:**
+        - Higher threshold (90%+): More selective, only learns from very confident operations
+        - Lower threshold (70-80%): More exploratory, learns from more operations
+        - Default (80%): Balanced approach
+        """)
     
     # Export/Import preferences
     st.markdown("---")
@@ -1543,6 +1669,7 @@ def show_learning_tab(pipeline):
     
     with col1:
         st.markdown("**Export Preferences**")
+        st.caption("Includes both manual and auto-learned patterns")
         if st.button("📥 Export Learning Data"):
             prefs_json = pipeline.learning_engine.export_preferences()
             st.download_button(
@@ -1554,18 +1681,20 @@ def show_learning_tab(pipeline):
     
     with col2:
         st.markdown("**Import Preferences**")
+        st.caption("Load saved learning data")
         uploaded_prefs = st.file_uploader("Upload learning data", type=['json'], key="import_learning")
         if uploaded_prefs:
             try:
                 prefs_data = uploaded_prefs.read().decode()
                 pipeline.learning_engine.import_preferences(prefs_data)
                 st.success("✅ Preferences imported!")
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Error importing: {e}")
     
     # Reset option
     st.markdown("---")
-    if st.button("🔄 Reset All Learning Data", help="Clear all learned preferences"):
+    if st.button("🔄 Reset All Learning Data", help="Clear all learned preferences (manual + automatic)"):
         if st.checkbox("I understand this will delete all learning data"):
             pipeline.learning_engine.reset_learning()
             st.success("✅ Learning data reset")

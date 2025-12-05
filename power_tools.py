@@ -434,9 +434,76 @@ class LearningEngine:
             'type_conversions': {},
             'approved_operations': [],
             'rejected_operations': [],
-            'modifications': []
+            'modifications': [],
+            'auto_learned_patterns': []  # NEW: Patterns learned from automatic mode
         }
         self.feedback_history = []
+        self.auto_learning_enabled = True  # NEW: Toggle for automatic learning
+        self.confidence_threshold = 0.80  # NEW: Minimum confidence to auto-learn
+    
+    def enable_auto_learning(self, enabled: bool = True):
+        """Enable or disable automatic learning"""
+        self.auto_learning_enabled = enabled
+    
+    def set_confidence_threshold(self, threshold: float):
+        """Set minimum confidence threshold for auto-learning (0.0 to 1.0)"""
+        self.confidence_threshold = max(0.0, min(1.0, threshold))
+    
+    def auto_learn_from_operation(self, operation: str, parameters: Dict[str, Any],
+                                   column: str = None, data_type: str = None,
+                                   confidence: float = 1.0, success: bool = True):
+        """
+        Automatically learn from operations in automatic mode
+        Only learns from high-confidence successful operations
+        """
+        if not self.auto_learning_enabled:
+            return
+        
+        # Only learn from successful operations with sufficient confidence
+        if not success or confidence < self.confidence_threshold:
+            return
+        
+        learning_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'operation': operation,
+            'parameters': parameters,
+            'column': column,
+            'data_type': data_type,
+            'confidence': confidence,
+            'source': 'automatic_mode'
+        }
+        
+        self.user_preferences['auto_learned_patterns'].append(learning_entry)
+        
+        # Update operation-specific preferences
+        if operation == 'handle_missing' and column:
+            for col, method in parameters.items():
+                if col not in self.user_preferences['missing_value_strategies']:
+                    self.user_preferences['missing_value_strategies'][col] = []
+                self.user_preferences['missing_value_strategies'][col].append({
+                    'method': method,
+                    'confidence': confidence,
+                    'learned_from': 'automatic'
+                })
+        
+        elif operation == 'handle_outliers' and column:
+            for col, method in parameters.items():
+                if col not in self.user_preferences['outlier_strategies']:
+                    self.user_preferences['outlier_strategies'][col] = []
+                self.user_preferences['outlier_strategies'][col].append({
+                    'method': method,
+                    'confidence': confidence,
+                    'learned_from': 'automatic'
+                })
+        
+        # Auto-approve similar future operations
+        self.feedback_history.append({
+            'timestamp': datetime.now().isoformat(),
+            'action': 'auto_learned',
+            'operation': operation,
+            'parameters': parameters,
+            'confidence': confidence
+        })
     
     def record_approval(self, operation: str, parameters: Dict[str, Any], 
                        column: str = None, data_type: str = None):
@@ -495,20 +562,51 @@ class LearningEngine:
         self.user_preferences['modifications'].append(feedback)
     
     def get_preferred_strategy(self, operation: str, column: str = None,
-                              data_type: str = None) -> Optional[str]:
-        """Get user's preferred strategy based on learning"""
+                              data_type: str = None) -> Optional[Dict[str, Any]]:
+        """Get user's preferred strategy based on learning (including auto-learned)"""
         if operation == 'handle_missing':
             if column in self.user_preferences['missing_value_strategies']:
                 strategies = self.user_preferences['missing_value_strategies'][column]
-                # Return most common strategy
+                
+                # If we have auto-learned patterns, weight them by confidence
                 if strategies:
-                    return max(set(strategies), key=strategies.count)
+                    if isinstance(strategies[0], dict):
+                        # New format with confidence scores
+                        # Return strategy with highest confidence
+                        best_strategy = max(strategies, key=lambda x: x.get('confidence', 0))
+                        return {
+                            'method': best_strategy['method'],
+                            'confidence': best_strategy['confidence'],
+                            'learned_from': best_strategy.get('learned_from', 'manual')
+                        }
+                    else:
+                        # Legacy format - return most common
+                        most_common = max(set(strategies), key=strategies.count)
+                        return {
+                            'method': most_common,
+                            'confidence': 0.7,
+                            'learned_from': 'manual'
+                        }
         
         elif operation == 'handle_outliers':
             if column in self.user_preferences['outlier_strategies']:
                 strategies = self.user_preferences['outlier_strategies'][column]
+                
                 if strategies:
-                    return max(set(strategies), key=strategies.count)
+                    if isinstance(strategies[0], dict):
+                        best_strategy = max(strategies, key=lambda x: x.get('confidence', 0))
+                        return {
+                            'method': best_strategy['method'],
+                            'confidence': best_strategy['confidence'],
+                            'learned_from': best_strategy.get('learned_from', 'manual')
+                        }
+                    else:
+                        most_common = max(set(strategies), key=strategies.count)
+                        return {
+                            'method': most_common,
+                            'confidence': 0.7,
+                            'learned_from': 'manual'
+                        }
         
         return None
     
@@ -518,18 +616,28 @@ class LearningEngine:
         approvals = len(self.user_preferences['approved_operations'])
         rejections = len(self.user_preferences['rejected_operations'])
         modifications = len(self.user_preferences['modifications'])
+        auto_learned = len(self.user_preferences['auto_learned_patterns'])
         
         approval_rate = (approvals / total_feedback * 100) if total_feedback > 0 else 0
+        
+        # Calculate confidence improvement
+        auto_patterns = self.user_preferences['auto_learned_patterns']
+        avg_auto_confidence = (sum(p['confidence'] for p in auto_patterns) / len(auto_patterns)) if auto_patterns else 0
         
         return {
             'total_interactions': total_feedback,
             'approvals': approvals,
             'rejections': rejections,
             'modifications': modifications,
+            'auto_learned': auto_learned,
             'approval_rate': approval_rate,
+            'auto_learning_enabled': self.auto_learning_enabled,
+            'confidence_threshold': self.confidence_threshold,
+            'avg_auto_confidence': avg_auto_confidence,
             'learned_patterns': {
                 'missing_value_preferences': len(self.user_preferences['missing_value_strategies']),
-                'outlier_preferences': len(self.user_preferences['outlier_strategies'])
+                'outlier_preferences': len(self.user_preferences['outlier_strategies']),
+                'auto_learned_operations': auto_learned
             }
         }
     
