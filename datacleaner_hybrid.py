@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import re
 
-# Import the configuration manager, hybrid intelligence, visual insights, and power tools
+# Import the configuration manager, hybrid intelligence, visual insights, power tools, and predictive modeling
 from config import ConfigManager, config_ui
 from hybrid_intelligence import (
     CleaningMode, RiskLevel, CleaningRule, OperationExplanation,
@@ -17,6 +17,9 @@ from visual_insights import DataQualityVisualizer, ComparisonVisualizer, Interac
 from power_tools import (
     SnapshotManager, CodeGenerator, LearningEngine, RecipeManager, 
     INDUSTRY_TEMPLATES
+)
+from predictive_modeling import (
+    PredictionPipeline, ModelBuilder, ProblemType, ModelType, ModelConfig
 )
 
 class DataProfiler:
@@ -401,6 +404,10 @@ class DataPipeline:
         self.learning_engine = LearningEngine()
         self.recipe_manager = RecipeManager()
         
+        # Predictive modeling components
+        self.prediction_pipeline = None
+        self.trained_models = {}
+        
         # Load industry templates
         for template_key, template_data in INDUSTRY_TEMPLATES.items():
             self.recipe_manager.save_recipe(
@@ -697,15 +704,15 @@ def main():
     if pipeline.data is not None:
         # Different tab layouts based on mode
         if st.session_state.cleaning_mode == CleaningMode.MANUAL:
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🧹 Clean (Manual)", "⚡ Power Tools", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🧹 Clean (Manual)", "⚡ Power Tools", "🤖 Predictions", "📤 Export"])
             show_manual_mode(pipeline, tabs)
         
         elif st.session_state.cleaning_mode == CleaningMode.ASSISTED:
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 AI Suggestions", "✅ Review & Approve", "⚡ Power Tools", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 AI Suggestions", "✅ Review & Approve", "⚡ Power Tools", "🔮 Predictions", "📤 Export"])
             show_assisted_mode(pipeline, tabs)
         
         else:  # Automatic
-            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 Auto-Clean", "📊 Results", "⚡ Power Tools", "📤 Export"])
+            tabs = st.tabs(["📊 Data Preview", "🔍 Profile", "🤖 Auto-Clean", "📊 Results", "⚡ Power Tools", "🔮 Predictions", "📤 Export"])
             show_automatic_mode(pipeline, tabs)
     
     else:
@@ -751,6 +758,9 @@ def show_manual_mode(pipeline, tabs):
         show_power_tools_tab(pipeline)
     
     with tabs[4]:
+        show_predictions_tab(pipeline)
+    
+    with tabs[5]:
         show_export_tab(pipeline)
 
 
@@ -772,6 +782,9 @@ def show_assisted_mode(pipeline, tabs):
         show_power_tools_tab(pipeline)
     
     with tabs[5]:
+        show_predictions_tab(pipeline)
+    
+    with tabs[6]:
         show_export_tab(pipeline)
 
 
@@ -793,6 +806,9 @@ def show_automatic_mode(pipeline, tabs):
         show_power_tools_tab(pipeline)
     
     with tabs[5]:
+        show_predictions_tab(pipeline)
+    
+    with tabs[6]:
         show_export_tab(pipeline)
 
 
@@ -1699,6 +1715,356 @@ def show_learning_tab(pipeline):
             pipeline.learning_engine.reset_learning()
             st.success("✅ Learning data reset")
             st.rerun()
+
+
+def show_predictions_tab(pipeline):
+    """Show predictive modeling interface"""
+    st.subheader("🔮 Predictive Modeling")
+    st.info("💡 Build ML models from your cleaned data to make predictions")
+    
+    # Check if we have cleaned data
+    data_to_use = pipeline.cleaned_data if pipeline.cleaned_data is not None else pipeline.data
+    
+    if data_to_use is None:
+        st.warning("⚠️ No data available. Please load data first.")
+        return
+    
+    # Initialize prediction pipeline if needed
+    if pipeline.prediction_pipeline is None:
+        pipeline.prediction_pipeline = PredictionPipeline(data_to_use)
+    
+    # Create sub-tabs
+    pred_tabs = st.tabs(["🎯 Build Model", "📊 Model Results", "🔮 Make Predictions", "📚 Model Comparison"])
+    
+    with pred_tabs[0]:
+        show_model_building_tab(pipeline)
+    
+    with pred_tabs[1]:
+        show_model_results_tab(pipeline)
+    
+    with pred_tabs[2]:
+        show_make_predictions_tab(pipeline)
+    
+    with pred_tabs[3]:
+        show_model_comparison_tab(pipeline)
+
+
+def show_model_building_tab(pipeline):
+    """Show model building interface"""
+    st.markdown("### 🎯 Build Prediction Model")
+    
+    data_to_use = pipeline.cleaned_data if pipeline.cleaned_data is not None else pipeline.data
+    
+    # Analyze readiness
+    if st.button("🔍 Analyze Prediction Readiness"):
+        analysis = pipeline.prediction_pipeline.analyze_prediction_readiness()
+        
+        if analysis['ready']:
+            st.success("✅ Data is ready for ML!")
+        else:
+            st.error("❌ Data needs preparation")
+            for issue in analysis['issues']:
+                st.write(f"- {issue}")
+        
+        if analysis['recommendations']:
+            st.markdown("**Recommendations:**")
+            for rec in analysis['recommendations']:
+                st.info(rec)
+        
+        # Show potential targets
+        st.markdown("### 🎯 Suggested Target Columns")
+        if analysis['potential_targets']:
+            for target in analysis['potential_targets']:
+                with st.expander(f"📊 {target['column']} ({target['type']})"):
+                    if target['type'] == 'classification':
+                        st.write(f"**Classes:** {target['n_classes']}")
+                    else:
+                        st.write(f"**Range:** {target['range']}")
+        else:
+            st.warning("No obvious target columns found. You can still select manually below.")
+    
+    st.markdown("---")
+    st.markdown("### ⚙️ Configure Model")
+    
+    # Select target column
+    target_column = st.selectbox(
+        "Target Column (what to predict)",
+        data_to_use.columns.tolist(),
+        help="Choose the column you want to predict"
+    )
+    
+    if not target_column:
+        st.warning("⚠️ Please select a target column")
+        return
+    
+    # Select features
+    available_features = [col for col in data_to_use.columns if col != target_column]
+    feature_columns = st.multiselect(
+        "Feature Columns (predictors)",
+        available_features,
+        default=available_features[:min(10, len(available_features))],
+        help="Choose columns to use for prediction"
+    )
+    
+    if not feature_columns:
+        st.warning("⚠️ Please select at least one feature column")
+        return
+    
+    # Auto-detect problem type with error handling
+    try:
+        problem_type = pipeline.prediction_pipeline.model_builder.auto_detect_problem_type(
+            data_to_use, target_column
+        )
+        st.info(f"🎯 Detected problem type: **{problem_type.value.title()}**")
+        
+        # Get model recommendations
+        recommendations = pipeline.prediction_pipeline.get_model_recommendations(target_column)
+    except Exception as e:
+        st.error(f"❌ Error analyzing target column: {str(e)}")
+        st.info("💡 Tips: Make sure the column exists and has valid data")
+        return
+    
+    st.markdown("### 🤖 Recommended Models")
+    
+    selected_models = []
+    for i, rec in enumerate(recommendations):
+        with st.expander(f"📊 {rec['model'].value.replace('_', ' ').title()}", expanded=(i==0)):
+            st.write(f"**Best For:** {rec['best_for']}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Pros:**")
+                for pro in rec['pros']:
+                    st.write(f"✅ {pro}")
+            with col2:
+                st.write("**Cons:**")
+                for con in rec['cons']:
+                    st.write(f"⚠️ {con}")
+            
+            if st.checkbox(f"Train this model", key=f"train_{rec['model'].value}"):
+                selected_models.append(rec['model'])
+    
+    # Advanced options
+    with st.expander("⚙️ Advanced Options"):
+        test_size = st.slider("Test Set Size", 0.1, 0.4, 0.2, 0.05)
+        random_state = st.number_input("Random Seed", value=42, min_value=0)
+    
+    # Train button
+    if st.button("🚀 Train Model(s)", type="primary", disabled=len(selected_models)==0):
+        if not selected_models:
+            st.error("Please select at least one model to train")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            results_list = []
+            
+            for idx, model_type in enumerate(selected_models):
+                status_text.text(f"Training {model_type.value.replace('_', ' ').title()}...")
+                progress_bar.progress((idx + 1) / len(selected_models))
+                
+                try:
+                    results = pipeline.prediction_pipeline.train_model(
+                        target_column=target_column,
+                        feature_columns=feature_columns,
+                        model_type=model_type
+                    )
+                    results_list.append(results)
+                    
+                    # Store in session state
+                    if 'trained_models' not in st.session_state:
+                        st.session_state.trained_models = []
+                    st.session_state.trained_models.append(results)
+                    
+                    st.success(f"✅ {model_type.value.replace('_', ' ').title()} trained!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error training {model_type.value}: {str(e)}")
+            
+            progress_bar.progress(1.0)
+            status_text.text("✅ All models trained!")
+            
+            if results_list:
+                st.balloons()
+                st.success(f"🎉 Successfully trained {len(results_list)} model(s)!")
+
+
+def show_model_results_tab(pipeline):
+    """Show model training results"""
+    st.markdown("### 📊 Model Training Results")
+    
+    if 'trained_models' not in st.session_state or not st.session_state.trained_models:
+        st.info("No models trained yet. Go to 'Build Model' tab to train your first model.")
+        return
+    
+    # Display each model's results
+    for idx, results in enumerate(st.session_state.trained_models):
+        with st.expander(
+            f"{'🥇' if idx == 0 else '🥈' if idx == 1 else '🥉' if idx == 2 else '📊'} "
+            f"{results.model_type.replace('_', ' ').title()} - "
+            f"{list(results.metrics.keys())[0]}: {list(results.metrics.values())[0]:.3f}",
+            expanded=(idx == 0)
+        ):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.markdown(f"**Model Type:** {results.model_type.replace('_', ' ').title()}")
+                st.markdown(f"**Problem Type:** {results.problem_type.title()}")
+                st.markdown(f"**Training Time:** {results.training_time:.2f} seconds")
+                st.markdown(f"**Trained:** {results.timestamp}")
+            
+            with col2:
+                # Show main metric prominently
+                main_metric = list(results.metrics.keys())[0]
+                main_value = list(results.metrics.values())[0]
+                st.metric(main_metric.upper(), f"{main_value:.3f}")
+            
+            # Show all metrics
+            st.markdown("#### 📈 Performance Metrics")
+            metric_cols = st.columns(len(results.metrics))
+            for col, (metric, value) in zip(metric_cols, results.metrics.items()):
+                col.metric(metric.replace('_', ' ').title(), f"{value:.3f}")
+            
+            # Feature importance
+            if results.feature_importance:
+                st.markdown("#### 🎯 Feature Importance")
+                
+                # Sort by importance
+                sorted_features = sorted(
+                    results.feature_importance.items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )
+                
+                import plotly.graph_objects as go
+                
+                fig = go.Figure(go.Bar(
+                    x=[imp for _, imp in sorted_features[:10]],
+                    y=[feat for feat, _ in sorted_features[:10]],
+                    orientation='h',
+                    marker_color='lightblue'
+                ))
+                
+                fig.update_layout(
+                    title="Top 10 Most Important Features",
+                    xaxis_title="Importance",
+                    yaxis_title="Feature",
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Sample predictions
+            if results.predictions_sample:
+                st.markdown("#### 🔮 Sample Predictions")
+                
+                sample_df = pd.DataFrame(results.predictions_sample)
+                sample_df['Status'] = sample_df['correct'].apply(lambda x: '✅ Correct' if x else '❌ Wrong')
+                
+                st.dataframe(
+                    sample_df[['actual', 'predicted', 'Status']],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+
+def show_make_predictions_tab(pipeline):
+    """Show interface for making new predictions"""
+    st.markdown("### 🔮 Make Predictions on New Data")
+    
+    if 'trained_models' not in st.session_state or not st.session_state.trained_models:
+        st.info("No trained models available. Train a model first.")
+        return
+    
+    st.info("💡 Upload new data to make predictions, or use current data")
+    
+    # Select model
+    model_options = [
+        f"{r.model_type.replace('_', ' ').title()} - {r.timestamp}"
+        for r in st.session_state.trained_models
+    ]
+    
+    selected_idx = st.selectbox(
+        "Select Model",
+        range(len(model_options)),
+        format_func=lambda x: model_options[x]
+    )
+    
+    # Option to upload new data or use current
+    prediction_source = st.radio(
+        "Data Source",
+        ["Use Current Data", "Upload New Data"]
+    )
+    
+    if prediction_source == "Upload New Data":
+        uploaded_file = st.file_uploader("Upload data for predictions", type=['csv', 'xlsx'])
+        
+        if uploaded_file:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    new_data = pd.read_csv(uploaded_file)
+                else:
+                    new_data = pd.read_excel(uploaded_file)
+                
+                st.success(f"✅ Loaded {len(new_data)} rows")
+                st.dataframe(new_data.head(), use_container_width=True)
+                
+                if st.button("🔮 Generate Predictions"):
+                    st.info("Prediction functionality would generate predictions here")
+                    # In full implementation:
+                    # predictions = pipeline.prediction_pipeline.trained_models[selected_idx].predict(new_data)
+                    
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+    else:
+        st.write("Using current dataset for predictions")
+        data_to_use = pipeline.cleaned_data if pipeline.cleaned_data is not None else pipeline.data
+        st.dataframe(data_to_use.head(), use_container_width=True)
+
+
+def show_model_comparison_tab(pipeline):
+    """Show model comparison"""
+    st.markdown("### 📚 Model Comparison")
+    
+    if 'trained_models' not in st.session_state or len(st.session_state.trained_models) < 2:
+        st.info("Train at least 2 models to compare them")
+        return
+    
+    # Create comparison table
+    comparison_data = []
+    for results in st.session_state.trained_models:
+        row = {
+            'Model': results.model_type.replace('_', ' ').title(),
+            'Training Time (s)': f"{results.training_time:.2f}"
+        }
+        for metric, value in results.metrics.items():
+            row[metric.title()] = f"{value:.3f}"
+        comparison_data.append(row)
+    
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    
+    # Recommend best model
+    st.markdown("### 🏆 Recommendation")
+    
+    # Find best model based on primary metric
+    best_idx = 0
+    best_score = 0
+    primary_metric = list(st.session_state.trained_models[0].metrics.keys())[0]
+    
+    for idx, results in enumerate(st.session_state.trained_models):
+        score = list(results.metrics.values())[0]
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    
+    best_model = st.session_state.trained_models[best_idx]
+    
+    st.success(
+        f"🥇 **Best Model:** {best_model.model_type.replace('_', ' ').title()}\n\n"
+        f"**{primary_metric.upper()}:** {best_score:.3f}"
+    )
 
 
 if __name__ == "__main__":
