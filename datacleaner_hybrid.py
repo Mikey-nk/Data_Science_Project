@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import re
 
-# Import the configuration manager, hybrid intelligence, visual insights, power tools, and predictive modeling
+# Import the configuration manager, hybrid intelligence, visual insights, power tools, predictive modeling, and chatbot
 from config import ConfigManager, config_ui
 from hybrid_intelligence import (
     CleaningMode, RiskLevel, CleaningRule, OperationExplanation,
@@ -21,6 +21,7 @@ from power_tools import (
 from predictive_modeling import (
     PredictionPipeline, ModelBuilder, ProblemType, ModelType, ModelConfig
 )
+from chatbot_interface import ConversationalAgent, ChatbotResponse
 
 class DataProfiler:
     """Profiles datasets to detect quality issues"""
@@ -408,6 +409,9 @@ class DataPipeline:
         self.prediction_pipeline = None
         self.trained_models = {}
         
+        # Chatbot component
+        self.chatbot = ConversationalAgent(pipeline=self)
+        
         # Load industry templates
         for template_key, template_data in INDUSTRY_TEMPLATES.items():
             self.recipe_manager.save_recipe(
@@ -588,6 +592,17 @@ def main():
     
     st.title("🧹 Data Cleaning & Profiling System")
     st.markdown("### Hybrid Manual/Automatic Cleaning with AI Explanations")
+    
+    # Chatbot toggle button in title row
+    col_title, col_chat = st.columns([5, 1])
+    with col_chat:
+        # Ensure show_chatbot is initialized
+        if 'show_chatbot' not in st.session_state:
+            st.session_state.show_chatbot = False
+            
+        if st.button("💬 Chat Assistant" if not st.session_state.show_chatbot else "💬 Hide Chat"):
+            st.session_state.show_chatbot = not st.session_state.show_chatbot
+    
     st.markdown("---")
     
     # Initialize session state
@@ -602,6 +617,12 @@ def main():
     
     if 'show_config' not in st.session_state:
         st.session_state.show_config = False
+    
+    if 'chat_messages' not in st.session_state:
+        st.session_state.chat_messages = []
+    
+    if 'show_chatbot' not in st.session_state:
+        st.session_state.show_chatbot = False
     
     config_mgr = st.session_state.config_manager
     pipeline = st.session_state.pipeline
@@ -698,6 +719,11 @@ def main():
     if st.session_state.show_config:
         with st.expander("⚙️ Configuration Manager", expanded=True):
             config_ui()
+        st.markdown("---")
+    
+    # Show chatbot if toggled
+    if st.session_state.show_chatbot:
+        show_chatbot_interface(pipeline)
         st.markdown("---")
     
     # Main content area
@@ -2065,6 +2091,90 @@ def show_model_comparison_tab(pipeline):
         f"🥇 **Best Model:** {best_model.model_type.replace('_', ' ').title()}\n\n"
         f"**{primary_metric.upper()}:** {best_score:.3f}"
     )
+
+
+def show_chatbot_interface(pipeline):
+    """Show conversational chatbot interface"""
+    st.markdown("### 💬 AI Chat Assistant")
+    st.caption("Ask me anything about your data, cleaning, or ML!")
+    
+    # Chat container
+    chat_container = st.container()
+    
+    with chat_container:
+        # Display chat history
+        for msg in st.session_state.chat_messages:
+            role = msg.get('role', 'user')
+            content = msg.get('message', '')
+            
+            if role == 'user':
+                with st.chat_message("user", avatar="👤"):
+                    st.write(content)
+            else:
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.markdown(content)
+                    
+                    # Show suggestions if available
+                    if msg.get('suggestions'):
+                        st.caption("**Suggestions:**")
+                        cols = st.columns(len(msg['suggestions'][:3]))
+                        for idx, suggestion in enumerate(msg['suggestions'][:3]):
+                            with cols[idx]:
+                                if st.button(suggestion, key=f"sug_{len(st.session_state.chat_messages)}_{idx}"):
+                                    st.session_state.pending_user_input = suggestion
+                                    st.rerun()
+    
+    # Handle pending suggestion click
+    if 'pending_user_input' in st.session_state:
+        user_input = st.session_state.pending_user_input
+        del st.session_state.pending_user_input
+        
+        # Add user message
+        st.session_state.chat_messages.append({
+            'role': 'user',
+            'message': user_input
+        })
+        
+        # Get chatbot response
+        response = pipeline.chatbot.process_message(user_input)
+        
+        # Add assistant response
+        st.session_state.chat_messages.append({
+            'role': 'assistant',
+            'message': response.message,
+            'suggestions': response.suggestions
+        })
+        
+        st.rerun()
+    
+    # Chat input
+    user_input = st.chat_input("Ask me anything... (e.g., 'What's wrong with my data?')")
+    
+    if user_input:
+        # Add user message
+        st.session_state.chat_messages.append({
+            'role': 'user',
+            'message': user_input
+        })
+        
+        # Get chatbot response
+        response = pipeline.chatbot.process_message(user_input)
+        
+        # Add assistant response
+        st.session_state.chat_messages.append({
+            'role': 'assistant',
+            'message': response.message,
+            'suggestions': response.suggestions
+        })
+        
+        st.rerun()
+    
+    # Clear chat button
+    if st.session_state.chat_messages:
+        if st.button("🗑️ Clear Chat History"):
+            st.session_state.chat_messages = []
+            pipeline.chatbot.clear_history()
+            st.rerun()
 
 
 if __name__ == "__main__":
