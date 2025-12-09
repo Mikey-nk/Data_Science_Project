@@ -1978,7 +1978,11 @@ def show_model_results_tab(pipeline):
                     height=400
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(
+                    fig, 
+                    use_container_width=True,
+                    key=f"feature_importance_{idx}_{results.model_type}"  # Add this!
+                )
             
             # Sample predictions
             if results.predictions_sample:
@@ -1990,7 +1994,8 @@ def show_model_results_tab(pipeline):
                 st.dataframe(
                     sample_df[['actual', 'predicted', 'Status']],
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
+                    key=f"predictions_df_{idx}_{results.model_type}"  # Add this!
                 )
 
 
@@ -2114,15 +2119,15 @@ def show_chatbot_interface(pipeline):
                 with st.chat_message("assistant", avatar="🤖"):
                     st.markdown(content)
                     
-                    # Show suggestions if available
-                    if msg.get('suggestions'):
-                        st.caption("**Suggestions:**")
-                        cols = st.columns(len(msg['suggestions'][:3]))
-                        for idx, suggestion in enumerate(msg['suggestions'][:3]):
-                            with cols[idx]:
-                                if st.button(suggestion, key=f"sug_{len(st.session_state.chat_messages)}_{idx}"):
-                                    st.session_state.pending_user_input = suggestion
-                                    st.rerun()
+                    # # Show suggestions if available
+                    # if msg.get('suggestions'):
+                    #     st.caption("**Suggestions:**")
+                    #     cols = st.columns(len(msg['suggestions'][:3]))
+                    #     for idx, suggestion in enumerate(msg['suggestions'][:3]):
+                    #         with cols[idx]:
+                    #             if st.button(suggestion, key=f"sug_{len(st.session_state.chat_messages)}_{idx}"):
+                    #                 st.session_state.pending_user_input = suggestion
+                    #                 st.rerun()
     
     # Handle pending suggestion click
     if 'pending_user_input' in st.session_state:
