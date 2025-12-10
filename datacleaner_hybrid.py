@@ -6,6 +6,7 @@ import io
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import re
+from firebase_config_integration import init_storage_from_config
 
 # Import the configuration manager, hybrid intelligence, visual insights, power tools, predictive modeling, and chatbot
 from config import ConfigManager, config_ui
