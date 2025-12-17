@@ -1,6 +1,6 @@
 """
-Chatbot Interface Module
-Conversational AI assistant for data cleaning and ML
+Enhanced Chatbot Interface Module with FULL API Integration
+Complete implementation with AI-powered responses
 """
 
 import pandas as pd
@@ -8,6 +8,7 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from enum import Enum
+import json
 
 
 class IntentType(Enum):
@@ -142,11 +143,180 @@ class IntentClassifier:
         return IntentType.UNKNOWN
 
 
-class ConversationalAgent:
-    """Main chatbot agent"""
+class APIClient:
+    """Handles API calls to various LLM providers"""
     
-    def __init__(self, pipeline=None):
+    def __init__(self, config_manager):
+        self.config_manager = config_manager
+        self.api_enabled = False
+        self.api_provider = None
+        self.api_model = None
+        self.api_key = None
+        self._initialize()
+    
+    def _initialize(self):
+        """Initialize API client with configured provider"""
+        if not self.config_manager:
+            return
+        
+        try:
+            best_api = self.config_manager.get_best_api()
+            if best_api:
+                self.api_enabled = True
+                self.api_provider = best_api['provider']
+                self.api_model = best_api['model']
+                self.api_key = self.config_manager.get_api_key(self.api_provider)
+        except Exception as e:
+            print(f"Error initializing API: {e}")
+            self.api_enabled = False
+    
+    def reload(self):
+        """Reload API configuration"""
+        self._initialize()
+    
+    def generate_response(self, prompt: str, context: Dict = None, 
+                         temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
+        """Generate AI response using configured API"""
+        
+        if not self.api_enabled or not self.api_key:
+            return None
+        
+        try:
+            if self.api_provider == "anthropic":
+                return self._call_anthropic(prompt, context, temperature, max_tokens)
+            elif self.api_provider == "openai":
+                return self._call_openai(prompt, context, temperature, max_tokens)
+            elif self.api_provider == "google_gemini":
+                return self._call_gemini(prompt, context, temperature, max_tokens)
+            else:
+                return None
+        except Exception as e:
+            print(f"API call error: {e}")
+            return None
+    
+    def _call_anthropic(self, prompt: str, context: Dict, temperature: float, max_tokens: int) -> str:
+        """Call Anthropic Claude API"""
+        try:
+            import anthropic
+            
+            client = anthropic.Anthropic(api_key=self.api_key)
+            
+            # Build system message with context
+            system_message = self._build_system_message(context)
+            
+            message = client.messages.create(
+                model=self.api_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_message,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            return message.content[0].text
+        except ImportError:
+            print("⚠️ anthropic library not installed. Run: pip install anthropic")
+            return None
+        except Exception as e:
+            print(f"Anthropic API error: {e}")
+            return None
+    
+    def _call_openai(self, prompt: str, context: Dict, temperature: float, max_tokens: int) -> str:
+        """Call OpenAI GPT API"""
+        try:
+            import openai
+            
+            client = openai.OpenAI(api_key=self.api_key)
+            
+            # Build system message
+            system_message = self._build_system_message(context)
+            
+            response = client.chat.completions.create(
+                model=self.api_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            return response.choices[0].message.content
+        except ImportError:
+            print("⚠️ openai library not installed. Run: pip install openai")
+            return None
+        except Exception as e:
+            print(f"OpenAI API error: {e}")
+            return None
+    
+    def _call_gemini(self, prompt: str, context: Dict, temperature: float, max_tokens: int) -> str:
+        """Call Google Gemini API"""
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.api_model)
+            
+            # Build full prompt with context
+            system_message = self._build_system_message(context)
+            full_prompt = f"{system_message}\n\nUser: {prompt}"
+            
+            response = model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                )
+            )
+            
+            return response.text
+        except ImportError:
+            print("⚠️ google-generativeai library not installed. Run: pip install google-generativeai")
+            return None
+        except Exception as e:
+            print(f"Gemini API error: {e}")
+            return None
+    
+    def _build_system_message(self, context: Dict) -> str:
+        """Build system message with data context"""
+        system_msg = """You are an expert data cleaning and analysis assistant. You help users:
+- Understand their data quality issues
+- Clean and prepare data for analysis
+- Build predictive models
+- Generate insights from data
+
+Keep responses concise, friendly, and actionable. Use emojis appropriately."""
+
+        if context:
+            system_msg += "\n\n**Current Context:**"
+            
+            if context.get('data_loaded'):
+                system_msg += f"\n- Dataset loaded: {context.get('rows', 0):,} rows, {context.get('columns', 0)} columns"
+            
+            if context.get('data_cleaned'):
+                system_msg += "\n- Data has been cleaned"
+            
+            if context.get('profile_available'):
+                system_msg += "\n- Data profile available"
+                if context.get('quality_score'):
+                    system_msg += f" (Quality Score: {context.get('quality_score')}/100)"
+            
+            if context.get('issues'):
+                system_msg += f"\n- Known issues: {', '.join(context.get('issues', []))}"
+            
+            if context.get('model_trained'):
+                system_msg += "\n- ML model has been trained"
+        
+        return system_msg
+
+
+class ConversationalAgent:
+    """Main chatbot agent with FULL API integration"""
+    
+    def __init__(self, pipeline=None, config_manager=None):
         self.pipeline = pipeline
+        self.config_manager = config_manager
         self.classifier = IntentClassifier()
         self.conversation_history = []
         self.context = {
@@ -157,6 +327,75 @@ class ConversationalAgent:
             'data_cleaned': False,
             'model_trained': False
         }
+        
+        # Initialize API client
+        self.api_client = APIClient(config_manager)
+        
+        # Chatbot configuration
+        chatbot_config = config_manager.get_chatbot_config() if config_manager else {}
+        self.use_ai_for_unknown = chatbot_config.get('fallback_to_local', True)
+        self.temperature = chatbot_config.get('temperature', 0.7)
+        self.max_tokens = chatbot_config.get('max_tokens', 1000)
+    
+    def reload_api_config(self):
+        """Reload API configuration (called when config changes)"""
+        self.api_client.reload()
+        
+        if self.api_client.api_enabled:
+            print(f"✅ API reloaded: {self.api_client.api_provider} ({self.api_client.api_model})")
+        else:
+            print("ℹ️ API disabled - using rule-based responses")
+    
+    def get_api_status(self) -> Dict[str, Any]:
+        """Get current API configuration status"""
+        return {
+            'enabled': self.api_client.api_enabled,
+            'provider': self.api_client.api_provider,
+            'model': self.api_client.api_model
+        }
+    
+    def _build_data_context(self) -> Dict[str, Any]:
+        """Build context about current data state"""
+        context = {
+            'data_loaded': False,
+            'data_cleaned': False,
+            'profile_available': False,
+            'model_trained': False,
+            'rows': 0,
+            'columns': 0,
+            'issues': []
+        }
+        
+        if self.pipeline and self.pipeline.data is not None:
+            context['data_loaded'] = True
+            context['rows'] = len(self.pipeline.data)
+            context['columns'] = len(self.pipeline.data.columns)
+            
+            if self.pipeline.cleaned_data is not None:
+                context['data_cleaned'] = True
+            
+            if self.pipeline.profile_result is not None:
+                context['profile_available'] = True
+                
+                # Add quality score
+                profile = self.pipeline.profile_result
+                total_cells = context['rows'] * context['columns']
+                missing_cells = profile['missing_data']['total_missing']
+                quality_score = max(0, 100 - (missing_cells / total_cells * 100)) if total_cells > 0 else 0
+                context['quality_score'] = int(quality_score)
+                
+                # Add issues
+                if profile['missing_data']['total_missing'] > 0:
+                    context['issues'].append(f"{profile['missing_data']['total_missing']} missing values")
+                if profile['duplicates']['duplicate_rows'] > 0:
+                    context['issues'].append(f"{profile['duplicates']['duplicate_rows']} duplicates")
+                if profile['outliers']:
+                    context['issues'].append(f"Outliers in {len(profile['outliers'])} columns")
+            
+            if self.pipeline.prediction_pipeline and self.pipeline.trained_models:
+                context['model_trained'] = True
+        
+        return context
     
     def process_message(self, user_input: str) -> ChatbotResponse:
         """Process user message and return response"""
@@ -171,8 +410,18 @@ class ConversationalAgent:
         # Classify intent
         intent = self.classifier.classify(user_input)
         
-        # Generate response based on intent
+        # Try rule-based response first
         response = self._handle_intent(intent, user_input)
+        
+        # If unknown intent and API is enabled, try AI response
+        if intent == IntentType.UNKNOWN and self.api_client.api_enabled:
+            ai_response = self._generate_ai_response(user_input)
+            if ai_response:
+                response = ChatbotResponse(
+                    message=ai_response,
+                    intent=intent,
+                    suggestions=self._extract_suggestions_from_ai(ai_response)
+                )
         
         # Store response in history
         self.conversation_history.append({
@@ -184,48 +433,70 @@ class ConversationalAgent:
         
         return response
     
+    def _generate_ai_response(self, user_input: str) -> Optional[str]:
+        """Generate AI-powered response"""
+        
+        # Build context
+        context = self._build_data_context()
+        
+        # Create enhanced prompt
+        prompt = f"""User question: {user_input}
+
+Please provide a helpful, concise response about their data cleaning task. 
+If they're asking about their specific data, refer to the context provided.
+Keep responses under 200 words and actionable."""
+
+        # Get AI response
+        ai_response = self.api_client.generate_response(
+            prompt=prompt,
+            context=context,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens
+        )
+        
+        return ai_response
+    
+    def _extract_suggestions_from_ai(self, ai_response: str) -> List[str]:
+        """Extract action suggestions from AI response"""
+        suggestions = []
+        lines = ai_response.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            # Look for patterns like "1.", "•", "-", "*"
+            if re.match(r'^[\d\-\*\•]+[\.\):]?\s+', line):
+                # Clean up the line
+                suggestion = re.sub(r'^[\d\-\*\•]+[\.\):]?\s+', '', line)
+                if len(suggestion) > 10 and len(suggestion) < 100:
+                    suggestions.append(suggestion)
+        
+        # Limit to 3 suggestions
+        return suggestions[:3]
+    
     def _handle_intent(self, intent: IntentType, user_input: str) -> ChatbotResponse:
-        """Handle specific intent"""
+        """Handle specific intent with rule-based responses"""
         
-        if intent == IntentType.UPLOAD_DATA:
-            return self._handle_upload_data()
+        handlers = {
+            IntentType.UPLOAD_DATA: self._handle_upload_data,
+            IntentType.SHOW_DATA: self._handle_show_data,
+            IntentType.PROFILE_DATA: self._handle_profile_data,
+            IntentType.ANALYZE_QUALITY: self._handle_analyze_quality,
+            IntentType.FIND_ISSUES: self._handle_find_issues,
+            IntentType.SHOW_STATISTICS: self._handle_show_statistics,
+            IntentType.PREDICT: self._handle_predict,
+            IntentType.GET_HELP: self._handle_get_help,
+            IntentType.SUGGEST_NEXT: self._handle_suggest_next,
+            IntentType.SAVE_WORKFLOW: self._handle_save_workflow,
+            IntentType.UNDO_ACTION: self._handle_undo,
+        }
         
-        elif intent == IntentType.SHOW_DATA:
-            return self._handle_show_data()
-        
-        elif intent == IntentType.PROFILE_DATA:
-            return self._handle_profile_data()
-        
-        elif intent == IntentType.CLEAN_DATA:
+        # Handlers that need user_input parameter
+        if intent == IntentType.CLEAN_DATA:
             return self._handle_clean_data(user_input)
-        
-        elif intent == IntentType.ANALYZE_QUALITY:
-            return self._handle_analyze_quality()
-        
-        elif intent == IntentType.FIND_ISSUES:
-            return self._handle_find_issues()
-        
-        elif intent == IntentType.SHOW_STATISTICS:
-            return self._handle_show_statistics()
-        
         elif intent == IntentType.BUILD_MODEL:
             return self._handle_build_model(user_input)
-        
-        elif intent == IntentType.PREDICT:
-            return self._handle_predict()
-        
-        elif intent == IntentType.GET_HELP:
-            return self._handle_get_help()
-        
-        elif intent == IntentType.SUGGEST_NEXT:
-            return self._handle_suggest_next()
-        
-        elif intent == IntentType.SAVE_WORKFLOW:
-            return self._handle_save_workflow()
-        
-        elif intent == IntentType.UNDO_ACTION:
-            return self._handle_undo()
-        
+        elif intent in handlers:
+            return handlers[intent]()
         else:
             return self._handle_unknown(user_input)
     
@@ -301,7 +572,7 @@ class ConversationalAgent:
         # Calculate quality score
         total_cells = len(self.pipeline.data) * len(self.pipeline.data.columns)
         missing_cells = profile['missing_data']['total_missing']
-        quality_score = max(0, 100 - (missing_cells / total_cells * 100))
+        quality_score = max(0, 100 - (missing_cells / total_cells * 100)) if total_cells > 0 else 0
         
         message = f"📊 **Data Quality Report:**\n\n"
         message += f"**Quality Score:** {quality_score:.0f}/100 "
@@ -397,7 +668,7 @@ class ConversationalAgent:
         
         profile = self.pipeline.profile_result
         total_cells = len(self.pipeline.data) * len(self.pipeline.data.columns)
-        missing_pct = (profile['missing_data']['total_missing'] / total_cells * 100)
+        missing_pct = (profile['missing_data']['total_missing'] / total_cells * 100) if total_cells > 0 else 0
         dup_pct = profile['duplicates']['duplicate_percentage']
         
         quality_score = max(0, 100 - missing_pct - dup_pct)
@@ -578,8 +849,10 @@ class ConversationalAgent:
     
     def _handle_get_help(self) -> ChatbotResponse:
         """Handle help request"""
+        api_status = " (AI-powered)" if self.api_client.api_enabled else ""
+        
         return ChatbotResponse(
-            message="👋 **I'm here to help!**\n\n"
+            message=f"👋 **I'm here to help!{api_status}**\n\n"
                     "I can assist you with:\n\n"
                     "**📊 Data Operations:**\n"
                     "- Upload and view data\n"
@@ -617,7 +890,7 @@ class ConversationalAgent:
         
         if self.pipeline.profile_result is None:
             return ChatbotResponse(
-                message="**🔍 Step 2: Analyze Your Data**\n\nLet's profile your data to understand its quality and identify issues.",
+                message="**📊 Step 2: Analyze Your Data**\n\nLet's profile your data to understand its quality and identify issues.",
                 suggestions=["Analyze my data", "Check data quality"]
             )
         
@@ -662,7 +935,7 @@ class ConversationalAgent:
     
     def _handle_undo(self) -> ChatbotResponse:
         """Handle undo request"""
-        if self.pipeline and self.pipeline.snapshot_manager.can_undo():
+        if self.pipeline and hasattr(self.pipeline, 'snapshot_manager') and self.pipeline.snapshot_manager.can_undo():
             return ChatbotResponse(
                 message="⏪ **Undo Available!**\n\n"
                         "Go to: **Power Tools → Undo/Redo**\n\n"
@@ -713,3 +986,34 @@ class ConversationalAgent:
             'data_cleaned': False,
             'model_trained': False
         }
+    
+    def export_conversation(self, format: str = 'json') -> str:
+        """Export conversation history"""
+        if format == 'json':
+            return json.dumps(self.conversation_history, indent=2)
+        elif format == 'text':
+            text = []
+            for msg in self.conversation_history:
+                role = msg['role'].upper()
+                text.append(f"{role}: {msg['message']}\n")
+            return "\n".join(text)
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+
+
+# Utility functions for integration
+def create_chatbot(pipeline=None, config_manager=None) -> ConversationalAgent:
+    """Factory function to create chatbot instance"""
+    return ConversationalAgent(pipeline=pipeline, config_manager=config_manager)
+
+
+def format_response_for_display(response: ChatbotResponse) -> str:
+    """Format response for display in UI"""
+    output = response.message
+    
+    if response.suggestions:
+        output += "\n\n**Suggested Actions:**\n"
+        for i, suggestion in enumerate(response.suggestions, 1):
+            output += f"{i}. {suggestion}\n"
+    
+    return output

@@ -410,7 +410,7 @@ class DataPipeline:
         self.trained_models = {}
         
         # Chatbot component
-        self.chatbot = ConversationalAgent(pipeline=self)
+        self.chatbot = ConversationalAgent(pipeline=self, config_manager=self.config)
         
         # Load industry templates
         for template_key, template_data in INDUSTRY_TEMPLATES.items():
