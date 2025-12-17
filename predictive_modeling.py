@@ -177,9 +177,10 @@ class DataPreprocessor:
         
         self.feature_names = list(X.columns)
         
-        # Convert to numpy
+        # Convert to numpy - X is still a DataFrame here
         X_array = X.values.astype(float)
-        y_array = y.values
+        # y might be Series or numpy array
+        y_array = y.values if hasattr(y, 'values') else y
         
         # Scale features
         if scale_features and len(self.numeric_columns) > 0:
@@ -188,13 +189,20 @@ class DataPreprocessor:
         self.is_fitted = True
         return X_array, y_array, self.feature_names
     
-    def transform(self, df: pd.DataFrame, feature_columns: List[str] = None,
+    def transform(self, new_data: pd.DataFrame, feature_columns: List[str] = None,
                  scale_features: bool = True) -> np.ndarray:
         """Transform new data using fitted preprocessor"""
         if not self.is_fitted:
             raise ValueError("Preprocessor not fitted. Call fit_transform first.")
         
-        df = df.copy()
+        # Handle if new_data is already a numpy array
+        if isinstance(new_data, np.ndarray):
+            X_array = new_data.astype(float)
+            if scale_features and len(self.numeric_columns) > 0:
+                X_array = self.scaler.transform(X_array)
+            return X_array
+        
+        df = new_data.copy()
         
         if feature_columns is None:
             feature_columns = self.feature_names
